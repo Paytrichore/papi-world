@@ -4,6 +4,11 @@ import { ConfigService } from '@nestjs/config';
 import { Socket } from 'socket.io';
 import { WsException } from '@nestjs/websockets';
 
+interface JwtPayload {
+  sub: string;
+  [key: string]: unknown;
+}
+
 @Injectable()
 export class WsJwtGuard implements CanActivate {
   constructor(
@@ -23,8 +28,8 @@ export class WsJwtGuard implements CanActivate {
 
     try {
       const secret = this.configService.get<string>('JWT_SECRET', '');
-      const payload = this.jwtService.verify(token, { secret });
-      (client as any).user = payload;
+      const payload = this.jwtService.verify<JwtPayload>(token, { secret });
+      (client as Socket & { user: JwtPayload }).user = payload;
       return true;
     } catch {
       throw new WsException('Invalid or expired token');

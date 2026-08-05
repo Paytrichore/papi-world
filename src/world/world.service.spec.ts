@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { WorldService } from './world.service';
 import { getModelToken } from '@nestjs/mongoose';
 import { Cell } from './schemas/cell.schema';
+import { Server } from 'socket.io';
 
 describe('WorldService', () => {
   let service: WorldService;
@@ -60,7 +61,7 @@ describe('WorldService', () => {
 
     it('broadcasts cell:update when server is set', async () => {
       const mockEmit = jest.fn();
-      service.setServer({ emit: mockEmit } as any);
+      service.setServer({ emit: mockEmit } as unknown as Server);
 
       await service.placeOnCell(1, 2, 'peblob-1');
 
@@ -81,7 +82,7 @@ describe('WorldService', () => {
 
     it('broadcasts cell:update when server is set', async () => {
       const mockEmit = jest.fn();
-      service.setServer({ emit: mockEmit } as any);
+      service.setServer({ emit: mockEmit } as unknown as Server);
 
       await service.removeFromCell(1, 2, 'peblob-1');
 

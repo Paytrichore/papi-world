@@ -11,7 +11,7 @@ import { WorldModule } from './world/world.module';
     ConfigModule.forRoot({
       isGlobal: true,
     }),
-    MongooseModule.forRoot(process.env.MONGODB_URI || ''),
+    MongooseModule.forRoot(process.env.DB_URL || ''),
     JwtModule.register({
       global: true,
       secret: process.env.JWT_SECRET || '',
