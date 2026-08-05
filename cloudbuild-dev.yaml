@@ -1,0 +1,38 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'build',
+      '--platform=linux/amd64',
+      '-t', 'gcr.io/$PROJECT_ID/papi-world-dev:$COMMIT_SHA',
+      '.'
+    ]
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'push',
+      'gcr.io/$PROJECT_ID/papi-world-dev:$COMMIT_SHA'
+    ]
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      [
+        'run', 'deploy', 'papi-world-dev',
+        '--image', 'gcr.io/$PROJECT_ID/papi-world-dev:$COMMIT_SHA',
+        '--region', 'us-central1',
+        '--platform', 'managed',
+        '--allow-unauthenticated',
+      ]
+  # Afficher l'URL du service déployé
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        SERVICE_URL=$$(gcloud run services describe papi-world --region=us-central1 --format="value(status.url)")
+        echo "🚀 Service déployé avec succès en PRODUCTION !"
+        echo "📚 URL de l'API: $$SERVICE_URL"
+        echo "📖 Documentation Swagger: $$SERVICE_URL/api"
+        echo "💚 Health check: $$SERVICE_URL/health"
+images:
+  - 'gcr.io/$PROJECT_ID/papi-world-dev:$COMMIT_SHA'
+options:
+  logging: CLOUD_LOGGING_ONLY
