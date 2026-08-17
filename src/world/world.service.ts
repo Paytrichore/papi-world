@@ -82,7 +82,7 @@ export class WorldService {
     };
 
     await this.sendWebhook(
-      this.webhookUrl('PEBLOB_API_URL', '/webhooks/placement'),
+      this.webhookUrl('PEBLOB_API_URL', '/peblob/webhooks/placement'),
       peblobEvent,
     );
 
@@ -162,7 +162,10 @@ export class WorldService {
       correlationId: event.correlationId,
     };
     await this.sendWebhook(
-      this.webhookUrl('PEBLOB_API_URL', '/webhooks/placement/compensate'),
+      this.webhookUrl(
+        'PEBLOB_API_URL',
+        '/peblob/webhooks/placement/compensate',
+      ),
       compensation,
     );
   }
