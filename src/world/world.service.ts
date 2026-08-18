@@ -1,5 +1,10 @@
-import { Injectable } from '@nestjs/common';
-import { BadRequestException } from '@nestjs/common';
+import {
+  BadGatewayException,
+  ConflictException,
+  HttpException,
+  Injectable,
+  InternalServerErrorException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Cell, CellDocument } from './schemas/cell.schema';
@@ -11,6 +16,11 @@ import {
   PlacementCompensationEvent,
   PointsRefundedEvent,
 } from './dto/place-on-cell.dto';
+
+interface DownstreamError extends Error {
+  statusCode?: number;
+  code?: string;
+}
 
 @Injectable()
 export class WorldService {
@@ -55,7 +65,10 @@ export class WorldService {
       .findOne({ x, y, 'occupants.0': { $exists: true } })
       .exec();
     if (occupiedCell) {
-      throw new BadRequestException('Cette case est déjà occupée');
+      throw new ConflictException({
+        code: 'CELL_OCCUPIED',
+        message: 'Cette case est déjà occupée',
+      });
     }
 
     const correlationId = randomUUID();
@@ -84,7 +97,9 @@ export class WorldService {
     await this.sendWebhook(
       this.webhookUrl('PEBLOB_API_URL', '/peblob/webhooks/placement'),
       peblobEvent,
-    );
+    ).catch((error: unknown) => {
+      throw this.toPlacementException(error);
+    });
 
     try {
       await this.sendWebhook(
@@ -93,13 +108,16 @@ export class WorldService {
       );
     } catch (error) {
       await this.tryCompensatePeblob(peblobEvent);
-      throw error;
+      throw this.toPlacementException(error);
     }
 
     try {
       const cell = await this.placeOnCellIfFree(x, y, peblobId);
       if (!cell) {
-        throw new BadRequestException('Cette case est déjà occupée');
+        throw new ConflictException({
+          code: 'CELL_OCCUPIED',
+          message: 'Cette case est déjà occupée',
+        });
       }
       return cell;
     } catch (error) {
@@ -107,7 +125,7 @@ export class WorldService {
         this.tryCompensatePeblob(peblobEvent),
         this.tryRefundPoints(pointsEvent),
       ]);
-      throw error;
+      throw this.toPlacementException(error);
     }
   }
 
@@ -194,7 +212,10 @@ export class WorldService {
   private webhookUrl(environmentName: string, path: string): string {
     const baseUrl = process.env[environmentName];
     if (!baseUrl) {
-      throw new Error(`${environmentName} is not configured`);
+      throw new BadGatewayException({
+        code: 'PLACEMENT_DEPENDENCY_UNAVAILABLE',
+        message: 'Un service nécessaire au placement est indisponible',
+      });
     }
     return `${baseUrl.replace(/\/$/, '')}${path}`;
   }
@@ -202,7 +223,10 @@ export class WorldService {
   private async sendWebhook(url: string, event: object): Promise<void> {
     const secret = process.env.WEBHOOK_SHARED_SECRET;
     if (!secret) {
-      throw new Error('WEBHOOK_SHARED_SECRET is not configured');
+      throw new BadGatewayException({
+        code: 'PLACEMENT_DEPENDENCY_UNAVAILABLE',
+        message: 'Un service nécessaire au placement est indisponible',
+      });
     }
     const timestamp = Date.now().toString();
     const body = JSON.stringify(event);
@@ -219,8 +243,78 @@ export class WorldService {
       body,
     });
     if (!response.ok) {
-      throw new Error(`Webhook failed with status ${response.status}`);
+      const body = await response.text();
+      let payload: { code?: unknown; statusCode?: unknown } = {};
+      try {
+        payload = JSON.parse(body) as typeof payload;
+      } catch {
+        // Keep the downstream response private and expose only a stable gateway error.
+      }
+
+      const error = new Error(
+        'Downstream placement request failed',
+      ) as DownstreamError;
+      error.statusCode =
+        typeof payload.statusCode === 'number'
+          ? payload.statusCode
+          : response.status;
+      error.code = typeof payload.code === 'string' ? payload.code : undefined;
+      throw error;
     }
+  }
+
+  private toPlacementException(error: unknown): HttpException {
+    const downstreamError = error as DownstreamError;
+    const code = downstreamError.code;
+    const statusCode = downstreamError.statusCode;
+
+    if (code === 'PEBLOB_NOT_FOUND') {
+      return new HttpException(
+        { code, message: 'Peblob introuvable pour cet utilisateur' },
+        404,
+      );
+    }
+
+    if (code === 'PEBLOB_ALREADY_PLACED') {
+      return new ConflictException({
+        code,
+        message: 'Peblob déjà placé sur la carte',
+      });
+    }
+
+    if (code === 'INSUFFICIENT_ACTION_POINTS') {
+      return new HttpException(
+        { code, message: "Points d'action insuffisants" },
+        422,
+      );
+    }
+
+    if (error instanceof HttpException && error.getStatus() < 500) {
+      return error;
+    }
+
+    if (statusCode && statusCode >= 400 && statusCode < 500) {
+      return new BadGatewayException({
+        code: 'PLACEMENT_DEPENDENCY_UNAVAILABLE',
+        message: 'Un service nécessaire au placement est indisponible',
+      });
+    }
+
+    if (error instanceof HttpException) {
+      return error;
+    }
+
+    if (statusCode || error instanceof Error) {
+      return new BadGatewayException({
+        code: 'PLACEMENT_DEPENDENCY_UNAVAILABLE',
+        message: 'Un service nécessaire au placement est indisponible',
+      });
+    }
+
+    return new InternalServerErrorException({
+      code: 'PLACEMENT_FAILED',
+      message: "Le placement du péblob n'a pas pu être effectué",
+    });
   }
 
   async removeFromCell(
